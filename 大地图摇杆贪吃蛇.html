@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>大地图摇杆贪吃蛇</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #0b0b12; color: #fff;
+  font-family: -apple-system, "PingFang SC", Arial, sans-serif; touch-action: none;
+  user-select: none; -webkit-user-select: none; }
+canvas { display: block; }
+
+#hud {
+  position: fixed; top: 10px; left: 10px; z-index: 10;
+  background: rgba(0,0,0,.55); padding: 8px 12px; border-radius: 10px; font-size: 14px;
+}
+#hud b { color: #7CFC00; }
+
+#joystickZone {
+  position: fixed; left: 18px; bottom: 18px; z-index: 10;
+  width: 130px; height: 130px;
+}
+#joyBase {
+  width: 130px; height: 130px; border-radius: 50%;
+  background: rgba(255,255,255,.08); border: 2px solid rgba(255,255,255,.25);
+  position: relative;
+}
+#joyKnob {
+  width: 52px; height: 52px; border-radius: 50%;
+  background: rgba(124,252,0,.85); position: absolute;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  box-shadow: 0 0 12px rgba(124,252,0,.6);
+}
+
+#overlay {
+  position: fixed; inset: 0; z-index: 20;
+  background: rgba(0,0,0,.82);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+}
+#overlay h1 { font-size: 26px; color: #7CFC00; }
+#overlay p { font-size: 14px; color: #ccc; text-align: center; padding: 0 20px; }
+#overlay button {
+  border: none; border-radius: 10px; padding: 12px 26px; font-size: 16px;
+  background: #28a745; color: #fff;
+}
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="hud">
+  长度 <b id="lenVal">30</b>&nbsp;|&nbsp;
+  粗细 <b id="thickVal">12</b>&nbsp;|&nbsp;
+  豆豆 <b id="foodVal">0</b>
+</div>
+
+<div id="joystickZone">
+  <div id="joyBase">
+    <div id="joyKnob"></div>
+  </div>
+</div>
+
+<div id="overlay">
+  <h1 id="title">大地图贪吃蛇</h1>
+  <p id="sub">左下角摇杆控制方向，吃掉地图上的豆豆会变长变粗</p>
+  <button id="startBtn">开始游戏</button>
+</div>
+
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+function resize() {
+  cv.width = window.innerWidth;
+  cv.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const MAP_W = 4000;
+const MAP_H = 4000;
+const FOOD_COUNT = 700;
+const BASE_THICK = 12;
+const MAX_THICK = 58;
+const BASE_SPEED = 3.2;
+const MIN_SPEED = 1.6;
+
+let snake, angle, length, thickness, foods, alive, running, last, acc;
+
+function reset() {
+  snake = [];
+  const cx = MAP_W / 2;
+  const cy = MAP_H / 2;
+  for (let i = 0; i < 30; i++) {
+    snake.push({ x: cx - i * 2, y: cy });
+  }
+  angle = 0;
+  length = snake.length;
+  thickness = BASE_THICK;
+  foods = [];
+  alive = true;
+  acc = 0;
+  spawnFoods(FOOD_COUNT);
+  updateHUD();
+}
+
+function spawnFoods(n) {
+  for (let i = 0; i < n; i++) {
+    foods.push({
+      x: Math.random() * MAP_W,
+      y: Math.random() * MAP_H,
+      r: 3 + Math.random() * 3,
+      color: `hsl(${Math.random() * 360}, 80%, 60%)`
+    });
+  }
+}
+
+function updateHUD() {
+  document.getElementById('lenVal').textContent = Math.floor(length);
+  document.getElementById('thickVal').textContent = Math.floor(thickness);
+  document.getElementById('foodVal').textContent = foods.length;
+}
+
+function grow() {
+  const growLen = 2 + Math.floor(thickness / 6);
+  length += growLen;
+
+  const rate = (thickness - BASE_THICK) / (MAX_THICK - BASE_THICK);
+  thickness = Math.min(MAX_THICK, BASE_THICK + rate * 38 + 0.9);
+}
+
+function gameOver() {
+  alive = false;
+  running = false;
+  document.getElementById('title').textContent = '游戏结束';
+  document.getElementById('sub').textContent =
+    '最终长度 ' + Math.floor(length) + '，粗细 ' + Math.floor(thickness);
+  document.getElementById('startBtn').textContent = '重新开始';
+  document.getElementById('overlay').style.display = 'flex';
+}
+
+function update(dt) {
+  if (!alive) return;
+
+  const speed = Math.max(MIN_SPEED, BASE_SPEED - (thickness - BASE_THICK) * 0.03);
+  const head = snake[0];
+  const nx = head.x + Math.cos(angle) * speed;
+  const ny = head.y + Math.sin(angle) * speed;
+
+  if (nx < 0 || ny < 0 || nx > MAP_W || ny > MAP_H) {
+    return gameOver();
+  }
+
+  snake.unshift({ x: nx, y: ny });
+
+  let eaten = 0;
+  for (let i = foods.length - 1; i >= 0; i--) {
+    const f = foods[i];
+    const dx = nx - f.x;
+    const dy = ny - f.y;
+    if (dx * dx + dy * dy < (thickness + f.r) * (thickness + f.r)) {
+      foods.splice(i, 1);
+      eaten++;
+    }
+  }
+
+  if (eaten > 0) {
+    for (let i = 0; i < eaten; i++) grow();
+    spawnFoods(eaten);
+  }
+
+  while (snake.length > length) {
+    snake.pop();
+  }
+
+  if (snake.length > thickness * 2.2) {
+    const hx = snake[0].x;
+    const hy = snake[0].y;
+    const safe = Math.floor(thickness * 1.6);
+    for (let i = safe; i < snake.length; i++) {
+      const dx = hx - snake[i].x;
+      const dy = hy - snake[i].y;
+      if (dx * dx + dy * dy < thickness * thickness * 0.36) {
+        return gameOver();
+      }
+    }
+  }
+
+  updateHUD();
+}
+
+function drawGrid(camX, camY) {
+  const step = 80;
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+
+  const startX = Math.floor(camX / step) * step;
+  const startY = Math.floor(camY / step) * step;
+
+  for (let x = startX; x < camX + cv.width + step; x += step) {
+    const sx = x - camX;
+    ctx.beginPath();
+    ctx.moveTo(sx, 0);
+    ctx.lineTo(sx, cv.height);
+    ctx.stroke();
+  }
+  for (let y = startY; y < camY + cv.height + step; y += step) {
+    const sy = y - camY;
+    ctx.beginPath();
+    ctx.moveTo(0, sy);
+    ctx.lineTo(cv.width, sy);
+    ctx.stroke();
+  }
+}
+
+function render() {
+  ctx.fillStyle = '#0b0b12';
+  ctx.fillRect(0, 0, cv.width, cv.height);
+
+  const head = snake[0];
+  let camX = head.x - cv.width / 2;
+  let camY = head.y - cv.height / 2;
+
+  camX = Math.max(0, Math.min(MAP_W - cv.width, camX));
+  camY = Math.max(0, Math.min(MAP_H - cv.height, camY));
+
+  drawGrid(camX, camY);
+
+  ctx.save();
+  ctx.translate(-camX, -camY);
+
+  ctx.strokeStyle = 'rgba(124,252,0,0.25)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(0, 0, MAP_W, MAP_H);
+
+  for (const f of foods) {
+    ctx.fillStyle = f.color;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (let i = snake.length - 1; i >= 0; i--) {
+    const s = snake[i];
+    const t = i / snake.length;
+    const r = thickness * (0.62 + 0.38 * (1 - t));
+    ctx.fillStyle = i === 0 ? '#b6ff7a' : '#4bd14b';
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function loop(ts) {
+  if (!running) return;
+  const dt = Math.min(ts - last, 40);
+  last = ts;
+  acc += dt;
+  const step = 1000 / 60;
+  while (acc >= step) {
+    acc -= step;
+    update(step);
+  }
+  render();
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  reset();
+  document.getElementById('overlay').style.display = 'none';
+  running = true;
+  last = performance.now();
+  acc = 0;
+  requestAnimationFrame(loop);
+});
+
+const joyBase = document.getElementById('joyBase');
+const joyKnob = document.getElementById('joyKnob');
+let joyActive = false;
+let joyCenter = { x: 0, y: 0 };
+const joyRadius = 65;
+
+function getJoyCenter() {
+  const rect = joyBase.getBoundingClientRect();
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+}
+
+function handleJoyMove(clientX, clientY) {
+  const c = joyCenter;
+  let dx = clientX - c.x;
+  let dy = clientY - c.y;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const clamp = Math.min(dist, joyRadius);
+  if (dist > 0) {
+    dx = dx / dist * clamp;
+    dy = dy / dist * clamp;
+  }
+  joyKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+
+  if (dist > 8) {
+    angle = Math.atan2(dy, dx);
+  }
+}
+
+joyBase.addEventListener('touchstart', e => {
+  e.preventDefault();
+  joyActive = true;
+  joyCenter = getJoyCenter();
+  handleJoyMove(e.touches[0].clientX, e.touches[0].clientY);
+}, { passive: false });
+
+joyBase.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (!joyActive) return;
+  handleJoyMove(e.touches[0].clientX, e.touches[0].clientY);
+}, { passive: false });
+
+joyBase.addEventListener('touchend', e => {
+  e.preventDefault();
+  joyActive = false;
+  joyKnob.style.transform = 'translate(-50%, -50%)';
+});
+
+joyBase.addEventListener('mousedown', e => {
+  joyActive = true;
+  joyCenter = getJoyCenter();
+  handleJoyMove(e.clientX, e.clientY);
+});
+window.addEventListener('mousemove', e => {
+  if (!joyActive) return;
+  handleJoyMove(e.clientX, e.clientY);
+});
+window.addEventListener('mouseup', () => {
+  joyActive = false;
+  joyKnob.style.transform = 'translate(-50%, -50%)';
+});
+
+reset();
+render();
+</script>
+</body>
+</html>
